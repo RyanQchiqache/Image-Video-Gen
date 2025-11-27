@@ -1,3 +1,8 @@
+import os
+import time
+import signal
+import sys
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -7,33 +12,7 @@ import torchvision.datasets as datasets
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from model_gen import Discriminator, Generator, initialize_weights
-import os
-import time
-import signal
-import sys
-import logging
-import colorlog
-
-def setup_logger():
-    """Setup logger with colorlog."""
-    handler = colorlog.StreamHandler()
-    handler.setFormatter(colorlog.ColoredFormatter(
-        '%(log_color)s%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        log_colors={
-            'DEBUG': 'cyan',
-            'INFO': 'green',
-            'WARNING': 'yellow',
-            'ERROR': 'red',
-            'CRITICAL': 'bold_red',
-        },
-    ))
-    logger = colorlog.getLogger()
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    return logger
-
-logger = setup_logger()
+from loguru import logger
 
 def signal_handler(sig, frame):
     logger.info('You pressed Ctrl+C! Saving logs and exiting...')
