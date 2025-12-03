@@ -198,6 +198,16 @@ def main():
                     writer_real.flush()
                     writer_fake.flush()
 
+                    #Saving some samples to chose when to stop training manually
+                    sample_dir = "samples"
+                    os.makedirs(sample_dir, exist_ok=True)
+                    torchvision.utils.save_image(
+                        fake[32],
+                        f"{sample_dir}/epoch_{epoch}_step_{step}.png",
+                        normalize=True,
+                        value_range=(-1, 1),
+                    )
+
                 step += 1
 
         epoch_duration = time.time() - epoch_start_time
