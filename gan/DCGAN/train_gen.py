@@ -12,7 +12,9 @@ import torchvision.datasets as datasets
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from model_gen import Discriminator, Generator, initialize_weights
+from CelebADataset import CelebADataset
 from loguru import logger
+from tqdm import tqdm
 
 def signal_handler(sig, frame):
     logger.info('You pressed Ctrl+C! Saving logs and exiting...')
@@ -33,11 +35,11 @@ def main():
 
     # Hyperparameters
     LEARNING_RATE = 2e-4  # seen in most GAN models
-    BATCH_SIZE = 64       # augmenting batch to try out
+    BATCH_SIZE = 32       # augmenting batch to try out
     IMAGE_SIZE = 64       # Size to which images will be resized
-    CHANNELS_IMAGE = 1    # Number of channels in the input image (e.g., 1 for grayscale, 3 for RGB)
+    CHANNELS_IMAGE = 3    # Number of channels in the input image (e.g., 1 for grayscale, 3 for RGB)
     Z_DIM = 100           # Dimensionality of the latent vector (input to the generator)
-    EPOCHS = 5           # Number of epochs
+    EPOCHS = 50             # Number of epochs
     FEATURES_DISC = 64    # Number of features in the discriminator
     FEATURES_GEN = 64     # Number of features in the generator
     BETA1 = 0.5           # For Adam optimizer
@@ -45,7 +47,8 @@ def main():
     # Define image transformations
     transform = transforms.Compose(
         [
-            transforms.Resize((IMAGE_SIZE)),           # Resize images to the specified size
+            transforms.CenterCrop(178),
+            transforms.Resize((IMAGE_SIZE,IMAGE_SIZE)),           # Resize images to the specified size
             transforms.ToTensor(),                     # Convert images to PyTorch tensors
             transforms.Normalize(                      # Normalize images to the range [-1, 1]
                 [0.5 for _ in range(CHANNELS_IMAGE)],  # Mean normalization value for each channel
@@ -56,23 +59,24 @@ def main():
 
     # Dataset and DataLoader
     try:
-        dataset = datasets.MNIST(
-            root="dataset/",      # Root directory of the dataset
-            train=True,           # Specify training set
-            transform=transform,  # Apply defined transformations
-            download=True,        # Download dataset if not available locally
+        dataset = CelebADataset(
+            root_dir="/home/ryqc/projects/PycharmProjects/Image-Video-Gen/gan/DCGAN/dataset/img_align_celeba",
+            transform=transform,
         )
-        logger.info("Dataset loaded successfully.")
+        logger.info("CelebA dataset loaded successfully.")
     except Exception as e:
-        logger.error(f"Error downloading dataset: {e}")
+        logger.error(f"Error loading CelebA: {e}")
         return
 
     dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=0  # Start with 0 workers
+        num_workers=4,  # CelebA is heavy – use more workers if possible
+        pin_memory=True if device == "cuda" else False,
+        persistent_workers=True,
     )
+
     logger.info(f"Dataloader initialized with batch size {BATCH_SIZE}.")
 
     # Initialize the Discriminator and Generator models
@@ -113,48 +117,69 @@ def main():
     for epoch in range(EPOCHS):
         logger.info(f"Starting epoch {epoch}")
         epoch_start_time = time.time()
-        for batch_idx, (real, _) in enumerate(dataloader):
-            logger.debug(f"Processing batch {batch_idx}")
+        for batch_idx, (real, _) in tqdm(enumerate(dataloader)):
+            #logger.debug(f"Processing batch {batch_idx}")
             batch_start_time = time.time()
+
             real = real.to(device)
-            noise = torch.randn(BATCH_SIZE, Z_DIM, 1, 1).to(device)
-            fake = gen(noise)
 
-            # Train Discriminator: max log(D(x)) + log(1 - D(G(z)))
-            ## Discriminator update##
-            # Forward pass fake batch through Discriminator
+            # Random noise → input for the Generator
+            noise = torch.randn(real.size(0), Z_DIM, 1, 1).to(device)
+
+            # Generator forward pass: creates fake images AND the computation graph
+            fake = gen(noise)  # graph: noise → G → fake
+
+            # -------------------------
+            # Train Discriminator
+            # -------------------------
+            # Goal: maximize log(D(real)) + log(1 - D(fake))
+
+            # Discriminator prediction for real images
             disc_real = disc(real).reshape(-1)
-            loss_disc_real = criterion(disc_real, torch.ones_like(disc_real))  # Loss for real data
+            loss_disc_real = criterion(disc_real, torch.ones_like(disc_real))
+            # BCE(real, 1) = -log(D(real))
 
-            # Forward pass real batch through Discriminator
+            # Discriminator prediction for fake images
+            # .detach() removes the Generator graph so gradients DO NOT flow back into G
             disc_fake = disc(fake.detach()).reshape(-1)
-            loss_disc_fake = criterion(disc_fake, torch.zeros_like(disc_fake))  # Loss for fake data
+            loss_disc_fake = criterion(disc_fake, torch.zeros_like(disc_fake))
+            # BCE(fake, 0) = -log(1 - D(fake))
 
-            #Total Discriminator loss
-            loss_disc = (loss_disc_real + loss_disc_fake) / 2  # Combined loss
+            # Combined Discriminator loss
+            loss_disc = (loss_disc_real + loss_disc_fake) / 2
 
-            # Backpropagation for Discriminator
-            disc.zero_grad() # Zero the gradients
-            loss_disc.backward() # Backpropagate the loss
-            optimizer_disc.step() # Update the weights
+            # Backprop for Discriminator ONLY
+            disc.zero_grad()
+            loss_disc.backward()  # gradients flow: D(fake.detach) and D(real) → update only D
+            optimizer_disc.step()  # updates discriminator weights
+            # Generator is untouched because fake was detached
 
-            # Train Generator: min log(1 - D(G(z))) <-> max log(D(G(z)))
-            ### Generator Update ###
-            # Forward pass fake batch through Discriminator again, but do not detach this time
+            # -------------------------
+            # Train Generator
+            # -------------------------
+            # Goal: maximize log(D(fake))  <--> minimize BCE(D(fake), 1)
+            # Generator wants D(fake) = 1 (i.e., fool the discriminator)
+
+            # Evaluate discriminator on NON-detached fake images
             output = disc(fake).reshape(-1)
-            loss_gen = criterion(output, torch.ones_like(output))  # Generator loss
+            # graph: fake → D → output (this time gradients CAN flow back to G)
 
-            # Backpropagation for Generator
+            loss_gen = criterion(output, torch.ones_like(output))
+            # BCE(fake, 1) = -log(D(fake))
+
+            # Backprop for Generator ONLY
             gen.zero_grad()
-            loss_gen.backward()
+            loss_gen.backward()  # gradients flow through D(fake) → fake → G → update G
             optimizer_gen.step()
+            # Discriminator is untouched because optimizer_disc.step() is not called here
 
             # Print losses and log to TensorBoard or Logging to TensorBoard
-            if batch_idx % 100 == 0:
+            LOG_FREQ = len(dataloader) // 10
+            if batch_idx % LOG_FREQ == 0:
                 logger.info(
                     f"Epoch [{epoch}/{EPOCHS}] Batch {batch_idx}/{len(dataloader)} "
-                    f"Loss D: {loss_disc:.4f}, loss G: {loss_gen:.4f}, "
-                    f"Batch Time: {time.time() - batch_start_time:.2f} seconds"
+                    f"Loss D: {loss_disc:.4f}, Loss G: {loss_gen:.4f}, "
+                    f"Batch Time: {time.time() - batch_start_time:.2f}s"
                 )
 
                 with torch.no_grad():
@@ -177,6 +202,7 @@ def main():
 
         epoch_duration = time.time() - epoch_start_time
         logger.info(f"Epoch [{epoch}/{EPOCHS}] completed in {epoch_duration:.2f} seconds.")
+
 
         # Save the model checkpoints
         torch.save(gen.state_dict(), f"{checkpoint_dir}/generator_epoch_{epoch}.pth")
