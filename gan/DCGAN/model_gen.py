@@ -1,172 +1,193 @@
 import torch
 import torch.nn as nn
 
-# Define the Discriminator network
+
+# ============================================================
+# Discriminator
+# ============================================================
 class Discriminator(nn.Module):
-    def __init__(self, channel_image, feature_channel):
-        """
-        Initialize the Discriminator model.
+    """
+    Standard DCGAN discriminator.
 
-        Parameters:
-        channel_image (int): Number of channels in the input image.
-        feature_channel (int): Number of feature channels after the first convolution.
-        """
-        super(Discriminator, self).__init__()
-        self.discriminator = nn.Sequential(
-            # Initial convolutional layer
-            nn.Conv2d(channel_image, feature_channel, 4, 2, 1, bias=False),     # 64x64 -> 32x32
-            nn.LeakyReLU(0.2),
-            # Adding additional convolutional blocks
-            self.block_(feature_channel, feature_channel * 2, 4, 2, 1),         # 32x32 -> 16x16
-            self.block_(feature_channel * 2, feature_channel * 4, 4, 2, 1),     # 16x16 -> 8x8
-            self.block_(feature_channel * 4, feature_channel * 8, 4, 2, 1),     # 8x8 -> 4x4
-            # Final convolutional layer to produce a single output
-            nn.Conv2d(feature_channel * 8, 1, 4, 2, 0, bias=False),  # 4x4 -> 1x1
-            nn.Sigmoid()
+    The network progressively downsamples a 64×64 RGB image into a single
+    scalar probability indicating whether the input is real or generated.
+
+    channels_img: number of channels in the input image (e.g. 3 for RGB)
+    features_d:   base width multiplier for feature maps (e.g. 64)
+    """
+
+    def __init__(self, channels_img: int, features_d: int):
+        super().__init__()
+
+        # Input: (N, channels_img, 64, 64)
+        self.disc = nn.Sequential(
+            # Initial convolution – no BatchNorm per DCGAN paper
+            nn.Conv2d(
+                in_channels=channels_img,
+                out_channels=features_d,
+                kernel_size=4,
+                stride=2,
+                padding=1
+            ),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # Downsample: 32×32 → 16×16
+            self._block(features_d, features_d * 2, 4, 2, 1),
+
+            # 16×16 → 8×8
+            self._block(features_d * 2, features_d * 4, 4, 2, 1),
+
+            # 8×8 → 4×4
+            self._block(features_d * 4, features_d * 8, 4, 2, 1),
+
+            # Final conv: 4×4 → 1×1 (prediction)
+            nn.Conv2d(
+                in_channels=features_d * 8,
+                out_channels=1,
+                kernel_size=4,
+                stride=1,
+                padding=0
+            ),
+            nn.Sigmoid()  # Output: (N, 1, 1, 1)
         )
 
-    def block_(self, channel_in, channel_out, kernel_size, stride, padding):
+    @staticmethod
+    def _block(in_c, out_c, kernel_size, stride, padding):
         """
-        Helper method to create a block with Conv2d, BatchNorm2d, and LeakyReLU layers.
-
-        Parameters:
-        channel_in (int): Number of input channels.
-        channel_out (int): Number of output channels.
-        kernel_size (int): Size of the convolutional kernel.
-        stride (int): Stride of the convolution.
-        padding (int): Padding for the convolution.
-
-        Returns:
-        nn.Sequential: Sequential block containing Conv2d, BatchNorm2d, and LeakyReLU layers.
+        A DCGAN convolutional downsampling block:
+        Conv → BatchNorm → LeakyReLU
         """
         return nn.Sequential(
-            nn.Conv2d(channel_in, channel_out, kernel_size, stride, padding, bias=False),
-            nn.BatchNorm2d(channel_out),
-            nn.LeakyReLU(0.2),
+            nn.Conv2d(
+                in_channels=in_c,
+                out_channels=out_c,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                bias=False
+            ),
+            nn.BatchNorm2d(out_c),
+            nn.LeakyReLU(0.2, inplace=True),
         )
 
     def forward(self, x):
-        """
-        Forward pass through the Discriminator.
+        return self.disc(x)
 
-        Parameters:
-        x (torch.Tensor): Input tensor.
 
-        Returns:
-        torch.Tensor: Output tensor after passing through the discriminator.
-        """
-        print(f"Input: {x.shape}")
-        for layer in self.discriminator:
-            x = layer(x)
-            print(f"After layer {layer}: {x.shape}")
-        return x
-
-# Testing the modified Discriminator
-def test_discriminator():
-    """
-    Test the Discriminator model to ensure it produces the expected output shapes.
-    """
-    N, channels, height, width = 8, 3, 64, 64  # For larger input size
-    t = torch.randn(N, channels, height, width)
-    discriminator = Discriminator(channels, 8)
-    print(discriminator)
-    output = discriminator(t)
-    print(f"Output shape: {output.shape}")
-
-test_discriminator()
-
-# Define the Generator network
+# ============================================================
+# Generator
+# ============================================================
 class Generator(nn.Module):
-    def __init__(self, z_dimension, channel_image, feature_channel):
-        """
-        Initialize the Generator model.
+    """
+    Standard DCGAN generator.
 
-        Parameters:
-        z_dimension (int): Dimension of the latent vector.
-        channel_image (int): Number of channels in the output image.
-        feature_channel (int): Number of feature channels after the first transpose convolution.
-        """
-        super(Generator, self).__init__()
-        self.generator = nn.Sequential(
-            # Initial block to transform latent vector
-            self.block_(z_dimension, feature_channel * 16, 4, 1, 0),
-            self.block_(feature_channel * 16, feature_channel * 8, 4, 2, 1),
-            self.block_(feature_channel * 8, feature_channel * 4, 4, 2, 1),
-            self.block_(feature_channel * 4, feature_channel * 2, 4, 2, 1),
-            # Final ConvTranspose2d layer to produce the image
-            nn.ConvTranspose2d(feature_channel * 2, channel_image, 4, 2, 1, bias=False),
-            nn.Tanh()  # Tanh activation to get values in the range [-1, 1]
+    Starts from a latent vector z of shape (N, z_dim, 1, 1)
+    and progressively upsamples it to a 64×64 image with pixel
+    values in [-1, 1].
+
+    z_dim:        dimension of latent noise vector (e.g. 100)
+    channels_img: number of channels in output (e.g. 3 for RGB)
+    features_g:   base width multiplier for feature maps
+    """
+
+    def __init__(self, z_dim: int, channels_img: int, features_g: int):
+        super().__init__()
+
+        # Input: (N, z_dim, 1, 1)
+        self.gen = nn.Sequential(
+            # 1×1 → 4×4
+            self._block(z_dim, features_g * 16, kernel_size=4, stride=1, padding=0),
+
+            # 4×4 → 8×8
+            self._block(features_g * 16, features_g * 8, 4, 2, 1),
+
+            # 8×8 → 16×16
+            self._block(features_g * 8, features_g * 4, 4, 2, 1),
+
+            # 16×16 → 32×32
+            self._block(features_g * 4, features_g * 2, 4, 2, 1),
+
+            # 32×32 → 64×64 (final RGB image)
+            nn.ConvTranspose2d(
+                in_channels=features_g * 2,
+                out_channels=channels_img,
+                kernel_size=4,
+                stride=2,
+                padding=1
+            ),
+            nn.Tanh()  # Output: (N, channels_img, 64, 64)
         )
 
-    def block_(self, channel_in, channel_out, kernel_size, stride, padding):
+    @staticmethod
+    def _block(in_c, out_c, kernel_size, stride, padding):
         """
-        Helper method to create a block with ConvTranspose2d, BatchNorm2d, and ReLU layers.
-
-        Parameters:
-        channel_in (int): Number of input channels.
-        channel_out (int): Number of output channels.
-        kernel_size (int): Size of the convolutional kernel.
-        stride (int): Stride of the convolution.
-        padding (int): Padding for the convolution.
-
-        Returns:
-        nn.Sequential: Sequential block containing ConvTranspose2d, BatchNorm2d, and ReLU layers.
+        A DCGAN upsampling block:
+        ConvTranspose → BatchNorm → ReLU
         """
         return nn.Sequential(
-            nn.ConvTranspose2d(channel_in, channel_out, kernel_size, stride, padding, bias=False),
-            nn.BatchNorm2d(channel_out),
-            nn.ReLU(True),  # ReLU activation
+            nn.ConvTranspose2d(
+                in_channels=in_c,
+                out_channels=out_c,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                bias=False
+            ),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True),
         )
 
     def forward(self, x):
-        """
-        Forward pass through the Generator.
+        return self.gen(x)
 
-        Parameters:
-        x (torch.Tensor): Input tensor (latent vector).
 
-        Returns:
-        torch.Tensor: Output tensor (generated image).
-        """
-        return self.generator(x)
-
-def initialize_weights(model):
+# ============================================================
+# Weight Initialization (DCGAN style)
+# ============================================================
+def initialize_weights(model: nn.Module):
     """
-    Initialize the weights of the model.
-
-    Parameters:
-    model (nn.Module): The model to initialize.
+    Initialize model weights according to DCGAN recommendations:
+    - Conv / ConvTranspose: normal mean=0, std=0.02
+    - BatchNorm:           weight mean=1, std=0.02; bias=0
     """
     for m in model.modules():
-        if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d)):
-            nn.init.normal_(m.weight, 0.0, 0.02)
+        if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+            nn.init.normal_(m.weight.data, 0.0, 0.02)
 
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.normal_(m.weight.data, 1.0, 0.02)
+            nn.init.constant_(m.bias.data, 0.0)
+
+
+# ============================================================
+# Quick Architectural Shape Test
+# ============================================================
 def test():
-    """
-    Test the Discriminator and Generator models to ensure they produce the expected output shapes.
-    """
-    # Define the dimensions for testing
-    N, channels, height, width = 8, 3, 64, 64
-    z_dim = 100  # Latent vector size for generator
+    N, C, H, W = 8, 3, 64, 64
+    z_dim = 100
+    features_d = 64
+    features_g = 64
 
-    # Create random input tensor for the discriminator
-    t = torch.randn(N, channels, height, width)
-    discriminator = Discriminator(channels, 8)
-    initialize_weights(discriminator)
+    # ------------------ Discriminator ------------------
+    x = torch.randn(N, C, H, W)
+    disc = Discriminator(channels_img=C, features_d=features_d)
+    initialize_weights(disc)
 
-    # Ensure the discriminator output shape is as expected
-    assert discriminator(t).shape == (N, 1, 1, 1)
+    out_d = disc(x)
+    print("Discriminator output shape:", out_d.shape)
+    assert out_d.shape == (N, 1, 1, 1)
 
-    # Create random latent vector for the generator
-    generator = Generator(z_dim, channels, 8)
-    initialize_weights(generator)
-    s = torch.randn(N, z_dim, 1, 1)
+    # ------------------ Generator ------------------
+    z = torch.randn(N, z_dim, 1, 1)
+    gen = Generator(z_dim=z_dim, channels_img=C, features_g=features_g)
+    initialize_weights(gen)
 
-    # Ensure the generator output shape is as expected
-    assert generator(s).shape == (N, channels, height, width)
+    out_g = gen(z)
+    print("Generator output shape:", out_g.shape)
+    assert out_g.shape == (N, C, H, W)
 
-    # Print success message if all assertions pass
-    print('success')
+    print("Architecture OK ✔")
+
 
 if __name__ == "__main__":
     test()
