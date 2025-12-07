@@ -1,0 +1,14 @@
+yolo-Weights/yolov8n.pt
+yolo-Weights/yolo11n.pt
+object_detect/yolo11n.pt
+object_detect/yolov8n.pt
+object_detect/images
+object_detect/runs
+vid_venv/
+.idea/
+object_detect/images/
+object_detect/runs/
+yolo-Weights/
+__pycache__/
+*.pyc
+
