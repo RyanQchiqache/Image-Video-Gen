@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 
 import torch
 import torch.nn as nn
+from torchviz import make_dot
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
@@ -26,7 +27,7 @@ PATH = "/home/ryqc/projects/python_projects/Image-Video-Gen/cnn/experiments_cnnA
 run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 log_dir = os.path.join(PATH, "runs",f"effb0_cifar10_{run_name}" )
 writer = SummaryWriter(log_dir=log_dir)
-
+RENDER = False # to render autograd graph one 1 image [1, num_classes]
 
 # -----------------------------
 # Config
@@ -88,8 +89,7 @@ test_loader: DataLoader = DataLoader(
     num_workers=NUM_WORKERS,
 )
 
-
-# -----------------------------
+#-----------------------------
 # Optional: visualize samples (denormalize for correct display)
 # -----------------------------
 
@@ -107,13 +107,14 @@ for c in range(NUM_CLASSES):
         ax.axis("off")
         ax.set_title(classes[c])
 plt.tight_layout()
-# plt.show()
+#plt.show()
 
 
 # -----------------------------
 # Model (Correct: weights + classifier head replacement)
 # -----------------------------
 model = efficientnet_b0(weights=weights).to(DEVICE)
+logger.info(model)
 
 # Replace classifier head to output 10 classes
 in_features = model.classifier[1].in_features
@@ -130,6 +131,18 @@ else:
 params_m = sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6
 logger.info(f"EfficientNet-B0 trainable parameters: {params_m:.2f}M")
 
+#-----------------------------
+# Show graph
+#-----------------------------
+
+if RENDER:
+    model.eval()
+    image, _ = next(iter(train_loader))
+    images = image[:1].to(DEVICE)
+    out = model(images)
+    logger.info(f"output shape: {out.shape}") # should be [1, 10]
+
+    #dot = make_dot(out,params=dict(model.named_parameters())).render("efficientnet_b0_cifar10", format="png", directory="./graphs/")
 
 # -----------------------------
 # Criterion / Optim / AMP
@@ -241,7 +254,7 @@ def training(
 # Main
 # -----------------------------
 if __name__ == "__main__":
-    training(
+    """training(
         model=model,
         train_loader=train_loader,
         test_loader=test_loader,
@@ -249,7 +262,7 @@ if __name__ == "__main__":
         criterion=criterion,
         device=DEVICE,
         optim=optim,
-    )
+    )"""
 
 
 
