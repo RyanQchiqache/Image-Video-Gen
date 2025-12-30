@@ -43,7 +43,6 @@ class Tokenizer(nn.Module):
         return x
 
     def positional_embedding(self, num_patches, emb_dim):
-        # You *can* ignore num_patches and use self.num_patches, but I keep your API
         embedding = nn.Parameter(torch.empty(1, num_patches, emb_dim))
         return embedding
 

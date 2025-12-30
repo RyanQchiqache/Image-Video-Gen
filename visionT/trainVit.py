@@ -138,6 +138,18 @@ logger.info(f"model, loss, criterion, criterion, optim  OK!!")
 # METRICS
 #####################################################################################
 
+def iou(targets, labels, clss):
+    if targets.ndim() > labels.ndim():
+        targets = targets.argmax(dim=1)
+
+    pred_c = (targets == clss)
+    label_c = (labels == clss)
+
+    intersetion = (pred_c & label_c).sum().float()
+    union = (label_c | pred_c).sum().flaot()
+
+    return intersection / (union 1e8)
+
 def accuracy1(logits, labels):
     logits = logits.argmax(dim=1)
     return (logits == labels).float().mean()
