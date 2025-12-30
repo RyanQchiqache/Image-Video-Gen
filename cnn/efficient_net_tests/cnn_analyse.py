@@ -45,7 +45,7 @@ def activation_hook(name):
 
 
 hooks = []
-for i in range(6):
+for i in range(1, 9):
     hooks.append(
         model.features[i].register_forward_hook(activation_hook(f"block{i}"))
     )
@@ -55,21 +55,55 @@ with torch.no_grad():
     output = model(x)
     probs = torch.softmax(output, dim=1)
     pred = probs.argmax(dim=1).item()
+    print(pred)
 
 #for q,s in activations.items():
     #print(f"keys:{q} ----- values:{s}")
 
 
-act = activations["block2"][0]  # [C, H, W]
+def vis_activations(activations, hooks_name, num_maps):
+    act = activations[hooks_name][0]
+    if num_maps > act.shape[0]:
+        raise ValueError(f"choose number smaller or equal to: {act.shape[0]}")
 
-num_maps = min(8, act.shape[0])
-fig, axes = plt.subplots(1, num_maps, figsize=(15, 3))
+    plt.figure(figsize=(15,5))
+    
+    for i in range(num_maps):
+        plt.subplot(1, num_maps, i + 1)
+        plt.imshow(act[i], cmap="viridis")
+        plt.axis("off")
+        plt.title(f"{hooks_name} | channel {i}")
+    plt.tight_layout()
+    plt.show()
 
-for i in range(num_maps):
-    axes[i].imshow(act[i], cmap="viridis")
-    axes[i].axis("off")
 
-plt.show()
+for i in range(1, 9):
+    vis_activations(activations, f"block{i}", 8)
 
 for h in hooks:
     h.remove()
+
+
+#----------------------
+# Saliency_map
+#---------------------
+
+def saliency_map(X, y, model):
+
+    model.eval()
+
+    x_var = X.clone().detach().to(device)
+   # x_var.requires_grad() = True
+    y = y.to(device)
+
+    scores = model(x_var)
+
+    correct_scores = scores.gather(1, y.view(-1, 1)).squeeze()
+    correct_scores.backward(torch.ones_like(correct_scores))
+    saliency = x_var.grad.data.abs().max(dim=1)[0]
+
+    return saliency
+
+
+
+
